@@ -14,7 +14,7 @@ ARG CONFLUENT_DIST=4.1.1-2.11
 
 # PROPERTIES
 ENV IS_CAAS=1
-
+ 
 COPY coyote-entrypoint.sh .
 RUN chmod +x coyote-entrypoint.sh
 
