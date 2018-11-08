@@ -29,7 +29,7 @@ RUN apt-get update \
          openjdk-8-jre-headless='8u181-b13-1ubuntu0.16.04.1' \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
+ 
 # ADD COYOTE
 ARG COYOTE_VERSION=1.5
 ARG COYOTE_URL="https://github.com/Landoop/coyote/releases/download/v${COYOTE_VERSION}/coyote-${COYOTE_VERSION}"
