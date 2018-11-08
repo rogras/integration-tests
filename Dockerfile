@@ -62,8 +62,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y libaio1='0.3.11
 # ADD ORACLE
 COPY include/oracle-binaries/ /opt/oracle/
 RUN unzip /opt/oracle/instantclient-sdk-linux.$ORACLE_DIST.zip -d /opt/oracle && \
-	unzip /opt/oracle/instantclient-basiclite-linux.$ORACLE_DIST_part1.zip -d /opt/oracle && \
-	unzip /opt/oracle/instantclient-basiclite-linux.$ORACLE_DIST_part2.zip -d /opt/oracle && \
+	unzip /opt/oracle/instantclient-basiclite-linux-part1.$ORACLE_DIST.zip -d /opt/oracle && \
+	unzip /opt/oracle/instantclient-basiclite-linux-part2.$ORACLE_DIST.zip -d /opt/oracle && \
 	unzip /opt/oracle/instantclient-sqlplus-linux.$ORACLE_DIST.zip -d /opt/oracle && \
 	unzip /opt/oracle/instantclient-jdbc-linux.$ORACLE_DIST.zip -d /opt/oracle && \
 	mv /opt/oracle/instantclient_12_2 /opt/oracle/instantclient
