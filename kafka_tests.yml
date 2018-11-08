@@ -1,0 +1,1214 @@
+- name: coyote
+  title: Kafka Environment Tests 1
+
+- name: Status Info - Info de estado del sistema
+  skip: _INFO_
+  entries:
+      - name: Revisión de estructura de los topics
+        command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --describe
+      - name: Revisión de estructura de situacion logs data
+        command: ./confluent-4.1.1/bin/kafka-log-dirs --bootstrap-server kafka02-discovery:9092 --describe
+      - name: Listado de topics que no llega al nivel de replicas requerido
+        command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-tst-0.zk02-discovery:2181,zk02-tst-1.zk02-discovery:2181,zk02-tst-2.zk02-discovery:2181  --describe --under-replicated-partitions
+      - name: Listado de topics que tienen particiones no disponibles
+        command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-tst-0.zk02-discovery:2181,zk02-tst-1.zk02-discovery:2181,zk02-tst-2.zk02-discovery:2181  --describe --unavailable-partitions
+
+- name: Kafka Brokers - Pruebas de Source/Sink mediante KafkaCat, Pruebas de gestion de topics, Pruebas de Rendimiento.
+  skip: _kafka_brokers_
+  entries:
+    - name: (CLEAN) Borramos topic para que la prueba sea relanzable
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-coyotebrokers01 --delete
+      ignore_exit_code: true
+    - name: Creamos el topic cai-arqlab-coyotebrokers01
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-coyotebrokers01 --partitions 3 --replication-factor 1 --create
+      stdout_has: [ 'Created topic "cai-arqlab-coyotebrokers01".' ]
+    - name: Listamos los topics existentes y validamos que el topic cai-arqlab-coyotebrokers01 existe
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-tst-0.zk02-discovery:2181,zk02-tst-1.zk02-discovery:2181,zk02-tst-2.zk02-discovery:2181  --list
+      stdout_has: [ 'cai-arqlab-coyotebrokers01' ]
+    - name: Escribimos un mensaje en el topic cai-arqlab-coyotebrokers01
+      command: kafkacat -P  -t cai-arqlab-coyotebrokers01 -b kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092 -c 1
+      stdin: |
+            ola_k_ase
+    - name: Validamos que el mismo mensaje escrito en el paso anterior se encuentra en cai-arqlab-coyotebrokers01
+      command: kafkacat -C  -t cai-arqlab-coyotebrokers01 -b kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092 -e -o beginning
+      stdout_has: [ 'ola_k_ase' ]
+    - name: Realizamos una prueba de rendimiento enviando 10.000 mensajes de 1000 bytes en paquetes de 5000 esperando que finalicen antes de 20 s (sino error)
+      command: ./confluent-4.1.1/bin/kafka-producer-perf-test --topic cai-arqlab-coyotebrokers01 --throughput 5000 --record-size 1000 --num-records 10000 --producer-props bootstrap.servers=kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092
+      timeout: 20s
+    - name: Borramos el topic cai-arqlab-coyotebrokers01
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-tst-0.zk02-discovery:2181,zk02-tst-1.zk02-discovery:2181,zk02-tst-2.zk02-discovery:2181  --topic cai-arqlab-coyotebrokers01 --delete
+    - name: Validamos que el topic cai-arqlab-coyotebrokers01 ya no existe
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-tst-0.zk02-discovery:2181,zk02-tst-1.zk02-discovery:2181,zk02-tst-2.zk02-discovery:2181 --list
+      stdout_not_has: [ 'cai-arqlab-coyotebrokers01' ]
+
+
+- name: Kafka Brokers - Prueba de 1 productor y 2 consumidores utlizando CG. Validacion que cuando 2 consumidores pertenecen al mismo grupo comparten offset a diferencia de cuando pertencen a grupos distintos
+  skip: _kafka_brokers_1_producer_-_2_consumers_
+  entries:
+    - name: (CLEAN) Borramos el topic cai-arqlab-coyoteconsumers01 para que la prueba sea relanzable
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-coyoteconsumers01 --delete
+      ignore_exit_code: true
+    - name: Creamos el topic cai-arqlab-coyoteconsumers01
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181 --topic cai-arqlab-coyoteconsumers01 --partitions 3 --replication-factor 1 --create
+      stdout_has: [ 'Created topic "cai-arqlab-coyoteconsumers01".' ]
+    - name: Escribimos 5 mensajes en el topic  cai-arqlab-coyoteconsumers01
+      command: kafkacat -P -t cai-arqlab-coyoteconsumers01 -b kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092 -c 5
+      stdin: |
+            message-1
+            message-2
+            message-3
+            message-4
+            message-5
+    - name: Damos de alta un CG (test1) de un solo miembro y se da de baja al consumir los 5 registros anteriores
+      command: ./confluent-4.1.1/bin/kafka-console-consumer --bootstrap-server kafka02-discovery:9092 --topic cai-arqlab-coyoteconsumers01 --from-beginning --group test1 --max-messages 5 --timeout-ms 5000
+      stdout_has: ['message-1','message-2','message-3','message-4','message-5']
+      stderr_has: ['Processed a total of 5 messages']
+    - name: Repetimos la prueba anterior pero esta vez al ya haber consumido los mensajes, el nuevo miembro no consume nada y por lo tanto sale por timeout
+      command: ./confluent-4.1.1/bin/kafka-console-consumer --bootstrap-server kafka02-discovery:9092 --topic cai-arqlab-coyoteconsumers01 --group test1 --max-messages 5 --timeout-ms 5000
+      stderr_has: ['Processed a total of 0 messages']
+    - name: Repetimos la prueba anterior pero con un nuevo grupo (test2) sobre el mismo topic. Debe volver a leer los 5 registros
+      command: ./confluent-4.1.1/bin/kafka-console-consumer --bootstrap-server kafka02-discovery:9092 --topic cai-arqlab-coyoteconsumers01 --from-beginning --group test2 --max-messages 5 --timeout-ms 5000
+      stdout_has: ['message-1','message-2','message-3','message-4','message-5']
+      stderr_has: ['Processed a total of 5 messages']
+    - name: Borramos los datos del grupo test1
+      command: ./confluent-4.1.1/bin/kafka-consumer-groups --bootstrap-server kafka02-discovery:9092 --group test1 --delete
+      stdout_has: ['was successful']
+    - name: Borramos los datos del grupo test2
+      command: ./confluent-4.1.1/bin/kafka-consumer-groups --bootstrap-server kafka02-discovery:9092 --group test2 --delete
+      stdout_has: ['was successful']
+    - name: Borramos el topic cai-arqlab-coyoteconsumers01 (validacion exit code)
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181 --topic cai-arqlab-coyoteconsumers01 --delete
+      
+
+- name: Schema Registry - Validacion de API Rest SR (alta, baja, listado, test de compatibilidad, HA)
+  skip: _schema_registry_operations_
+  entries:
+    - name: (CLEAN) Borramos schema cai-arqlab-coyoteschema01 para que la prueba sea relanzable
+      command: |
+        curl -X DELETE http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema01
+      ignore_exit_code: true
+    - name: Registramos una nueva version del esquema cai-arqlab-coyoteschema01 con un solo campo
+      command: |
+        curl  -vs --stderr -XPOST -i -H "Content-Type: application/vnd.schemaregistry.v1+json"
+             --data '{"schema": "{\"type\": \"string\"}"}'
+             "http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema01/versions"
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ' ]
+    - name: Validamos que el esquema cai-arqlab-coyoteschema01 realmente ha sido dado de alta
+      command: curl -vs --stderr -XGET -i "http://sr02-tst-0.sr02-discovery:8081/subjects"
+      stdout_has: [ 'cai-arqlab-coyoteschema01' ]
+    - name: Listamos las versiones del esquema cai-arqlab-coyoteschema01 (debe haber 1)
+      command: curl -vs --stderr -XGET -i "http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema01/versions"
+      stdout_has: [ '[1]' ]
+    #- name: Fetch Schema by name and version (schema registry)
+    #  command: curl -vs --stderr -XGET -i "http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema01/versions/1"
+    #  stdout_has: [ '"subject":"cai-arqlab-coyoteschema01","version":1' ]
+    #  stdout_not_has: [ 'error_code":[0-9]', 'Unexpected', 'HTTP/1.1 [45][0-9][0-9] ' ]
+    - name: (CLEAN) Borramos schema cai-arqlab-coyoteschema02 para que la prueba sea relanzable
+      ignore_exit_code: true
+      command: |
+        curl -X DELETE http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema02
+    - name: Registramos una nueva version del esquema cai-arqlab-coyoteschema02 con estructuras complejas (record type)
+      command: |
+        curl -vs --stderr -XPOST -i -H "Content-Type: application/vnd.schemaregistry.v1+json"
+             --data '{"schema": "{\"type\": \"record\", \"name\": \"User\", \"fields\": [{\"name\": \"name\", \"type\": \"string\"}]}"}'
+             "http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema02/versions"
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ' ]
+    - name: Validamos que si fueramos a añadir una columna más al esquema cai-arqlab-coyoteschema02 la API rest de test compatibility nos dice que son compatibles
+      command: |
+        curl -vs --stderr -XPOST -i -H "Content-Type: application/vnd.schemaregistry.v1+json"
+             --data '{"schema": "{\"type\": \"record\", \"name\": \"User\", \"fields\": [{\"name\": \"name\", \"type\": \"string\"}, {\"name\": \"address\", \"type\": \"string\"}]}"}'
+             "http://sr02-tst-0.sr02-discovery:8081/compatibility/subjects/cai-arqlab-coyoteschema02/versions/latest"
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ' ]
+      stdout_has: [ 'is_compatible' ]
+    - name: Validamos que la API rest de Get Schema Registry Configuration funciona
+      command: curl -vs --stderr -XGET -i "http://sr02-tst-0.sr02-discovery:8081/config"
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ' ]
+    - name: (CLEAN) Borramos el schema cai-arqlab-coyoteschema01 para que la prueba sea relanzable
+      command: |
+        curl  -vs --stderr -X DELETE http://sr02-tst-1.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema01/versions
+      ignore_exit_code: true
+    - name: Validamos que la HA funciona creando el schema cai-arqlab-coyoteschema01 apuntando a un nodo de SR distinto de las pruebas anteriores
+      command: |
+        curl  -vs --stderr -XPOST -i -H "Content-Type: application/vnd.schemaregistry.v1+json"
+             --data '{"schema": "{\"type\": \"string\"}"}'
+             "http://sr02-tst-1.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema01/versions"
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ' ]
+    - name: Validamos que la HA funciona revisando que el esquema cai-arqlab-coyoteschema01 existente apuntando a un nodo de SR distinto de las pruebas anteriores
+      command: curl -vs --stderr -XGET -i "http://sr02-tst-1.sr02-discovery:8081/subjects"
+      stdout_has: [ 'cai-arqlab-coyoteschema01' ]
+
+
+- name: Kafka Brokers & Schema registry - Caso de uso de un source y un sink utilizando SR (con y sin error)
+  skip: _ucase1_
+  entries:
+    - name: (CLEAN) Borramos el topic cai-arqlab-coyoteschema03 para que la prueba sea relanzable
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-coyoteschema03 --delete
+      ignore_exit_code: true
+    - name: Creamos el topic cai-arqlab-coyoteschema03
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-coyoteschema03 --partitions 3 --replication-factor 1 --create
+      stdout_has: [ 'Created topic "cai-arqlab-coyoteschema03".' ]
+    - name: (CLEAN) Si el SR cai-arqlab-coyoteschema03 existe, lo borramos para que la  prueba sea relanzable.
+      command: |
+          curl -X DELETE http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema03-value
+      ignore_exit_code: true
+    - name: Escribimos en el topic cai-arqlab-coyoteschema03  en avro y creamos el esquema correspondiente (la validación funcional se realiza en pasos posteriores)
+      command: ./confluent-4.1.1/bin/kafka-avro-console-producer --broker-list kafka02-discovery:9092 --topic cai-arqlab-coyoteschema03 --property value.schema='{"type":"record","name":"myrecord","fields":[{"name":"f1","type":"string"}]}'
+      stdin: |
+            {"f1": "value1"}
+    - name: Verificamos que el esquema cai-arqlab-coyoteschema03 se ha creado correspondientemente
+      command: curl -vs --stderr -XGET -i "http://sr02-tst-0.sr02-discovery:8081/subjects"
+      stdout_has: [ 'cai-arqlab-coyoteschema03' ]
+    - name: Leemos del topic cai-arqlab-coyoteschema03 utilizando SR y validamos que deserializa de avro correctamente
+      command: ./confluent-4.1.1/bin/kafka-avro-console-consumer --bootstrap-server kafka02-discovery:9092 --topic cai-arqlab-coyoteschema03 --from-beginning --max-messages 1
+      stdout_has: ['{"f1":"value1"}']
+      timeout: 30s
+    - name: Creamos fichero de datos para la prueba de validacion con error. El fichero contendra expresamente un campo inexistente (f2 en lugar de f1)
+      command: tee data.txt
+      stdin: |
+        {"f2": "value1"}
+    - name: Creamos el shell script test1.sh que ejecutara el productor en lugar de hacerlo directamente con el objetivo que el previsible fallo del productor no nos provoque fallo en la prueba.
+      command: tee /test1.sh
+      stdin: |
+        #!/bin/bash
+        ./confluent-4.1.1/bin/kafka-avro-console-producer --broker-list kafka02-discovery:9092 --topic cai-arqlab-coyoteschema03 --property value.schema='{"type":"record","name":"myrecord","fields":[{"name":"f1","type":"string"}]}' < /data.txt 2>&1
+        exit 0
+    - name: Convertimos en ejeucutable el script test1.sh
+      command: chmod 777 /test1.sh
+    - name: Ejecutamos el script que trata de insertar el registro y validamos que nos da el error que no ha podido encontrar el campo.
+      command: bash -c /test1.sh
+      stdout_has: [ 'Expected field name not found' ]
+      partial: true
+
+
+- name: Kafka Brokers & Schema registry -  Caso de uso de un source utilizando SR y 2 sinks en el que uno utiliza schema y otro no (validacion de no deserializacion)
+  skip: _ucase2_
+  entries:
+    - name: (CLEAN) Borramos topic cai-arqlab-coyoteschema03 para que la prueba sea relanzable.
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-coyoteschema03 --delete
+      ignore_exit_code: true
+    - name: Creamos topic cai-arqlab-coyoteschema03
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-coyoteschema03 --partitions 3 --replication-factor 1 --create
+      stdout_has: [ 'Created topic "cai-arqlab-coyoteschema03".' ]
+    - name: (CLEAN) Borramos esquema cai-arqlab-coyoteschema03 para que la prueba sea relanzable.
+      command: |
+          curl -X DELETE http://sr02-tst-0.sr02-discovery:8081/subjects/cai-arqlab-coyoteschema03-value
+      ignore_exit_code: true
+    - name: Escribimos en el topic cai-arqlab-coyoteschema03 y creamos el esquema cai-arqlab-coyoteschema03
+      command: ./confluent-4.1.1/bin/kafka-avro-console-producer --broker-list kafka02-discovery:9092 --topic cai-arqlab-coyoteschema03 --property value.schema='{"type":"record","name":"myrecord","fields":[{"name":"f1","type":"string"}]}'
+      stdin: |
+            {"f1": "value1"}
+    - name: Leemos del topic utilizando SR y kafka-avro-console-consumer y vemos el dato correctamente deserializado
+      command: ./confluent-4.1.1/bin/kafka-avro-console-consumer --bootstrap-server kafka02-discovery:9092 --topic cai-arqlab-coyoteschema03 --from-beginning --max-messages 1
+      stdout_has: ['{"f1":"value1"}']
+      stderr_has: ['Processed a total of 1 messages']
+      timeout: 30s
+    - name: Leemos el topic sin utilizar SR con Kafka-console-consumer y vemos el dato sin deserializar
+      command: ./confluent-4.1.1/bin/kafka-console-consumer --bootstrap-server kafka02-discovery:9092 --topic cai-arqlab-coyoteschema03 --from-beginning --max-messages 1
+      timeout: 30s
+      stdout_not_has: ['{"f1":"value1"}']
+      stderr_has: ['Processed a total of 1 messages']
+
+
+- name: Oracle DB - Prueba de conexion
+  skip: _oracledb_
+  entries:
+    - name: Probando conexión (si hay error saldra por exit code)
+      command: /opt/oracle/instantclient/sqlplus sys/oracle@oracle-tst:1521 as sysdba@XDB
+      stdin: |
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+        SELECT 1 FROM DUAL;
+
+- name: Kakfa Connect & Oracle DB - Replica de datos entre 2 tablas de la misma base de datos con KC, validacion de interaccion con la API REST de KC para dar de alta, borrar connectores y validar estados
+  skip: _KafkaConnect_
+  entries:
+
+    - name: (CLEAN) Borramos el source si existe (src-cai-arqlab-o-replicadb2ora)
+      command: |
+        curl -vs -X DELETE http://connect02-discovery:8083/connectors/src-cai-arqlab-o-replicadb2ora
+      ignore_exit_code: true
+
+    - name: (CLEAN) Borramos el sink si existe (snk-cai-arqlab-o-replicadb2ora)
+      command: |
+        curl -vs -X DELETE http://connect02-discovery:8083/connectors/snk-cai-arqlab-o-replicadb2ora
+      ignore_exit_code: true
+
+    - name: Esperamos 10 segundos para dar tiempo a que se borre el sink
+      command: sleep 10
+
+    - name: (CLEAN) Borramos todos los datos previos del consumer group si existe (snk-cai-arqlab-o-replicadb2ora) para conseguir que empieze desde 0
+      command: |
+        /confluent-4.1.1/bin/kafka-consumer-groups --bootstrap-server kafka02-discovery:9092 --delete --group connect-snk-cai-arqlab-o-replicadb2ora
+      ignore_exit_code: true
+
+    - name: (CLEAN) Borramos el topic de la prueba si existe cai-arqlab-SPCT37_LAB_KAFKA
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-SPCT37_LAB_KAFKA --delete
+      ignore_exit_code: true
+
+    - name: Creamos el topic cai-arqlab-SPCT37_LAB_KAFKA
+      command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-SPCT37_LAB_KAFKA --partitions 3 --replication-factor 1 --create
+      stdout_has: [ 'Created topic "cai-arqlab-SPCT37_LAB_KAFKA".' ]
+
+    - name: Creamos el usuario KAFKALAB y le damos permisos si no exise (validacion por exit code)
+      command: /opt/oracle/instantclient/sqlplus sys/oracle@oracle-tst:1521 as sysdba@XDB
+      stdin: |
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+        declare
+        userexist integer;
+        begin
+        select count(*) into userexist from dba_users where username='KAFKALAB';
+        if (userexist = 0) then
+        execute immediate 'CREATE USER KAFKALAB IDENTIFIED BY KAFKALAB DEFAULT TABLESPACE USERS TEMPORARY TABLESPACE TEMP';
+        execute immediate 'alter profile DEFAULT limit PASSWORD_REUSE_TIME unlimited';
+        execute immediate 'alter profile DEFAULT limit PASSWORD_LIFE_TIME  unlimited';
+        execute immediate 'grant connect, resource,create synonym,create view to KAFKALAB';
+        end if;
+        end;
+        /
+    - name: (CLEAN) Eliminamos la tabla SPCT37_LAB_KAFKA y SPCT37_LAB_KAFKA_OUT en caso de existir
+      command:  /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+      ignore_exit_code: true
+      stdin: |
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+        DROP TABLE SPCT37_LAB_KAFKA PURGE;
+        DROP TABLE SPCT37_LAB_KAFKA_OUT PURGE;
+
+    - name: Creamos la tabla de lectura del source (SPCT37_LAB_KAFKA)
+      command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+      stdin: |
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+
+        CREATE TABLE "SPCT37_LAB_KAFKA" (
+              "ROWNUMID" NUMBER(20) NOT NULL,
+              "PARTICIO" NUMBER(3 , 0) NOT NULL,
+              "NUMPERSO" NUMBER(13 , 0) NOT NULL,
+              "EMPRESA" NUMBER(5 , 0) NOT NULL,
+              "TIPDIR" CHAR(1) NOT NULL,
+              "PRIORIDA" NUMBER(3 , 0) NOT NULL,
+              "DIRECCIO" CHAR(60),
+              "CPOSTAL" CHAR(5) NOT NULL,
+              "LOCALIDA" CHAR(45) NOT NULL,
+              "PROVIN" CHAR(2) NOT NULL,
+              "PAIS" CHAR(3) NOT NULL,
+              "LOCINOM" NUMBER(3 , 0) NOT NULL,
+              "LOCINUM" NUMBER(3 , 0) NOT NULL,
+              "INNORMAL" CHAR(1) NOT NULL,
+              "CDRTAPOB" NUMBER(11 , 0) NOT NULL,
+              "CDRTAVIA" NUMBER(11 , 0) NOT NULL,
+              "CDRTAZON" NUMBER(11 , 0) NOT NULL,
+              "FECALTA" DATE DEFAULT SYSDATE,
+              "FEINIAPL" NUMBER(7 , 0) NOT NULL,
+              "FEFINAPL" NUMBER(7 , 0) NOT NULL,
+              "FECULTIM" DATE DEFAULT SYSDATE,
+              "HORULTIM" DATE,
+              "USUMODI" CHAR(8) NOT NULL,
+              "CANMODI" NUMBER(9 , 0) NOT NULL,
+              "FECNORMA" NUMBER(7 , 0) NOT NULL,
+              "HOGARID" NUMBER(11 , 0) NOT NULL,
+              "FEALHOID" NUMBER(7 , 0) NOT NULL,
+              "FEULMIDH" NUMBER(7 , 0) NOT NULL,
+              "INDDESGL" CHAR(1),
+              "TIPOVIA" CHAR(3),
+              "NOMCARRE" CHAR(60),
+              "NUMDESDE" DECIMAL(5 , 0),
+              "NUMHASTA" CHAR(10),
+              "NUMEDIFI" CHAR(25),
+              "NUMESCAL" CHAR(5),
+              "NUMERPIS" CHAR(15),
+              "NUMEPORT" CHAR(5),
+              "RESTA" CHAR(40),
+              "INDBLOC" DECIMAL(1 , 0) NOT NULL,
+              "CPOSTALNR" CHAR(15),
+              "CHGTMST" TIMESTAMP(5) DEFAULT systimestamp);
+      stdout_has: [ 'Table created.']
+
+    - name: Creamos la tabla de escritura del sink (SPCT37_LAB_KAFKA_OUT) (validacion por exit code)
+      command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+      stdin: |
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+
+        CREATE TABLE "SPCT37_LAB_KAFKA_OUT" (
+                        "ROWNUMID" NUMBER(20) NOT NULL,
+                        "PARTICIO" NUMBER(3 , 0) NOT NULL,
+                        "NUMPERSO" NUMBER(13 , 0) NOT NULL,
+                        "EMPRESA" NUMBER(5 , 0) NOT NULL,
+                        "TIPDIR" CHAR(1) NOT NULL,
+                        "PRIORIDA" NUMBER(3 , 0) NOT NULL,
+                        "DIRECCIO" CHAR(60),
+                        "CPOSTAL" CHAR(5) NOT NULL,
+                        "LOCALIDA" CHAR(45) NOT NULL,
+                        "PROVIN" CHAR(2) NOT NULL,
+                        "PAIS" CHAR(3) NOT NULL,
+                        "LOCINOM" NUMBER(3 , 0) NOT NULL,
+                        "LOCINUM" NUMBER(3 , 0) NOT NULL,
+                        "INNORMAL" CHAR(1) NOT NULL,
+                        "CDRTAPOB" NUMBER(11 , 0) NOT NULL,
+                        "CDRTAVIA" NUMBER(11 , 0) NOT NULL,
+                        "CDRTAZON" NUMBER(11 , 0) NOT NULL,
+                        "FECALTA" DATE DEFAULT SYSDATE,
+                        "FEINIAPL" NUMBER(7 , 0) NOT NULL,
+                        "FEFINAPL" NUMBER(7 , 0) NOT NULL,
+                        "FECULTIM" DATE DEFAULT SYSDATE,
+                        "HORULTIM" DATE,
+                        "USUMODI" CHAR(8) NOT NULL,
+                        "CANMODI" NUMBER(9 , 0) NOT NULL,
+                        "FECNORMA" NUMBER(7 , 0) NOT NULL,
+                        "HOGARID" NUMBER(11 , 0) NOT NULL,
+                        "FEALHOID" NUMBER(7 , 0) NOT NULL,
+                        "FEULMIDH" NUMBER(7 , 0) NOT NULL,
+                        "INDDESGL" CHAR(1),
+                        "TIPOVIA" CHAR(3),
+                        "NOMCARRE" CHAR(60),
+                        "NUMDESDE" DECIMAL(5 , 0),
+                        "NUMHASTA" CHAR(10),
+                        "NUMEDIFI" CHAR(25),
+                        "NUMESCAL" CHAR(5),
+                        "NUMERPIS" CHAR(15),
+                        "NUMEPORT" CHAR(5),
+                        "RESTA" CHAR(40),
+                        "INDBLOC" DECIMAL(1 , 0) NOT NULL,
+                        "CPOSTALNR" CHAR(15),
+                        "CHGTMST" TIMESTAMP(5) DEFAULT systimestamp);
+
+    - name: Insertamos 50 registros en la tabla origen SPCT37_LAB_KAFKA
+      command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+      stdin: |
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+
+        INSERT INTO SPCT37_LAB_KAFKA (ROWNUMID,PARTICIO,NUMPERSO ,EMPRESA ,TIPDIR ,PRIORIDA ,DIRECCIO ,CPOSTAL ,LOCALIDA,PROVIN ,PAIS ,LOCINOM,LOCINUM ,INNORMAL,CDRTAPOB,CDRTAVIA,CDRTAZON,FECALTA,FEINIAPL,FEFINAPL,FECULTIM,HORULTIM,USUMODI,CANMODI,FECNORMA,HOGARID,FEALHOID,FEULMIDH,INDDESGL,TIPOVIA,NOMCARRE,NUMDESDE,NUMHASTA,NUMEDIFI,NUMESCAL,NUMERPIS,NUMEPORT,RESTA,INDBLOC,CPOSTALNR)
+        with dummy(id) as (select 1 id from DUAL union all select id + 1 id from dummy where id < 1+50-1 AND id<50) select id,1,id,100,'D',1,'DIRECCION 1','08030','SANT ANDREU','BA','CAT',100,100,'A',100,101,102,SYSDATE,2018151,2018151,SYSDATE,SYSDATE,'ABCDEFGH',1,2018235,9999,2018235,2018235,'A','ABC','CARRER A',12,'15','192A','I','1er','2ona','la resta',1,'08030' from dummy;
+        COMMIT;
+      stdout_has: [ '50 rows created' ]
+
+    - name: Creamos el fichero source (connect1-src.json) (validacion por exit code)
+      command: tee connect1-src.json
+      stdin: |
+        {  "name": "src-cai-arqlab-o-replicadb2ora",
+           "config": {
+             "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+             "connection.url":"jdbc:oracle:thin:@oracle-tst:1521/XE",
+             "connection.user":"KAFKALAB",
+             "connection.password":"KAFKALAB",
+             "mode": "timestamp+incrementing",
+             "table.whitelist":"SPCT37_LAB_KAFKA",
+             "incrementing.column.name": "ROWNUMID",
+             "timestamp.column.name": "CHGTMST",
+             "topic.prefix": "cai-arqlab-",
+             "poll.interval.ms": "2000",
+             "batch.size": "25000",
+             "schema.pattern": "KAFKALAB",
+             "validate.non.null": "false"  }
+        }
+
+    - name: Creamos el source (src-cai-arqlab-o-replicadb2ora)
+      command: |
+          curl -vs --stderr -X POST -H "Content-Type: application/json" --data @connect1-src.json http://connect02-discovery:8083/connectors
+      stdout_has: [ '"name":"src-cai-arqlab-o-replicadb2ora"']
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+    - name: Creamos el fichero sink (connect1-snk.json) (validacion por exit code)
+      command: tee connect1-snk.json
+      stdin: |
+        {  "name": "snk-cai-arqlab-o-replicadb2ora",
+           "config": {
+             "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+             "connection.url":"jdbc:oracle:thin:@oracle-tst:1521/XE",
+             "connection.user":"KAFKALAB",
+             "connection.password":"KAFKALAB",
+             "topics.regex":"cai-arqlab-SPCT37_LAB_KAFKA",
+             "table.name.format":"SPCT37_LAB_KAFKA_OUT",
+             "insert.mode":"insert",
+             "auto.create":"false",
+             "batch.size": "25000",
+             "task.max":"3"
+           }
+        }
+
+    - name: Creamos el sink (snk-cai-arqlab-o-replicadb2ora)
+      command: |
+          curl -vs --stderr -X POST -H "Content-Type: application/json" --data @connect1-snk.json http://connect02-discovery:8083/connectors
+      stdout_has: [ '"name":"snk-cai-arqlab-o-replicadb2ora"']
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+    - name: Esperamos 30 segundos para dar tiempo a que el sink se dé de alta
+      command: sleep 30
+
+
+    - name: Create shell de test2.sh para poder capturar la info de offset por particion
+      command: tee /test2.sh
+      stdin: |
+        #!/bin/bash
+        kafkacat -C -t cai-arqlab-SPCT37_LAB_KAFKA -b kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092 -e -o beggining 2>&1 1>/dev/null | sed -e 's/: exiting//g' | awk '{split($0,a," "); sum += a[10]} END {print sum,"files"}'
+    - name: Damos permisos de ejecucion al script
+      command: chmod 777 /test2.sh
+
+    - name: Validamos que el source funciona revisando que el topic cai-arqlab-SPCT37_LAB_KAFKA contiene 50 registros
+      command: bash -c /test2.sh
+      stdout_has: [ '50 files' ]
+      timeout: 8s
+
+    - name: Validamos que el sink funciona revisando que la tabla SPCT37_LAB_KAFKA_OUT contiene 50 registros (validacion por exit code)
+      command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+      stdin: |
+        set serveroutput ON;
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+        DECLARE
+          regs NUMBER;
+        BEGIN
+          SELECT count(*) INTO regs FROM SPCT37_LAB_KAFKA_OUT;
+          IF regs IS NULL or regs<>50 THEN
+              raise_application_error(-20101, 'El numero de registros en SPCT37_LAB_KAFKA_OUT es ' || nvl(regs,0) || ' en lugar de 50');
+          ELSE
+              dbms_output.put_line('El numero de registros leidos es ' || nvl(regs,0));
+          END IF;
+        END;
+        /
+    - name: Validamos que los datos de origen y destino son exactamente iguales mediante COUNT y cláusula union campo por campo. (validacion por exit code)
+      command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+      stdin: |
+        set serveroutput ON;
+        WHENEVER SQLERROR EXIT SQL.SQLCODE;
+        DECLARE
+          regs NUMBER;
+        BEGIN
+          SELECT count(*) INTO regs FROM (
+            SELECT ROWNUMID,PARTICIO,NUMPERSO,EMPRESA,TIPDIR,PRIORIDA,DIRECCIO,CPOSTAL,LOCALIDA,PROVIN,PAIS,LOCINOM,LOCINUM,INNORMAL,CDRTAPOB,CDRTAVIA,
+                   CDRTAZON,FECALTA,FEINIAPL,FEFINAPL,FECULTIM,HORULTIM,USUMODI,CANMODI,FECNORMA,HOGARID,FEALHOID,FEULMIDH,INDDESGL,TIPOVIA,NOMCARRE,
+                   NUMDESDE,NUMHASTA,NUMEDIFI,NUMESCAL,NUMERPIS,NUMEPORT,RESTA,INDBLOC,CPOSTALNR FROM SPCT37_LAB_KAFKA
+            UNION
+            SELECT ROWNUMID,PARTICIO,NUMPERSO,EMPRESA,TIPDIR,PRIORIDA,DIRECCIO,CPOSTAL,LOCALIDA,PROVIN,PAIS,LOCINOM,LOCINUM,INNORMAL,CDRTAPOB,CDRTAVIA,
+                   CDRTAZON,FECALTA,FEINIAPL,FEFINAPL,FECULTIM,HORULTIM,USUMODI,CANMODI,FECNORMA,HOGARID,FEALHOID,FEULMIDH,INDDESGL,TIPOVIA,NOMCARRE,
+                   NUMDESDE,NUMHASTA,NUMEDIFI,NUMESCAL,NUMERPIS,NUMEPORT,RESTA,INDBLOC,CPOSTALNR FROM SPCT37_LAB_KAFKA_OUT) A;
+
+          IF regs IS NULL or regs<>50 THEN
+              raise_application_error(-20101, 'Hay registros que no son exactamente iguales en origen y en destino (debería haber 50 y hay ' || nvl(regs,0) );
+          ELSE
+              dbms_output.put_line('Registros validados correctamente (' || nvl(regs,0) || ').');
+          END IF;
+        END;
+        /
+    - name: Validacion especial para el campo timestamp (CHGTMST) puesto que se pierde precision a nivel de milesima y validamos que almenos a nivel de segundo sea correcta. (validacion por exit code)
+      command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+      stdin: |
+          set serveroutput ON;
+          WHENEVER SQLERROR EXIT SQL.SQLCODE;
+          DECLARE
+            regs NUMBER;
+          BEGIN
+            SELECT count(*) into regs FROM (SELECT DISTINCT TO_CHAR(CHGTMST,'dd/mm/yyyy hh24:mi:ss') FROM SPCT37_LAB_KAFKA UNION SELECT DISTINCT TO_CHAR(CHGTMST,'dd/mm/yyyy hh24:mi:ss') FROM SPCT37_LAB_KAFKA_OUT) A;
+
+            IF regs IS NULL or regs<>1 THEN
+                raise_application_error(-20101, 'El campo CHGTMST no es exactamente iguales a nivel de segundo en origen y en destino (hay ' || nvl(regs,0) || ' distintos)');
+            ELSE
+                dbms_output.put_line('Solo hay un dato distinto para CHGTMST ');
+            END IF;
+          END;
+          /
+    - name: Esperamos 5s para dar tiempo a KC a actualizar el estado de los conectores.
+      command: sleep 5
+    - name: Validamos que el servicio REST de status de src-cai-arqlab-o-replicadb2ora nos indica que el conector está corriendo sin problemas
+      command: |
+        curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/src-cai-arqlab-o-replicadb2ora/status
+      stdout_has: [ '"state":"RUNNING"' ]
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"PAUSED"','"state":"FAILED"']
+    - name: Validamos que el servicio REST de status de snk-cai-arqlab-o-replicadb2ora nos indica que el conector está corriendo sin problemas
+      command: |
+        curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/snk-cai-arqlab-o-replicadb2ora/status
+      stdout_has: [ '"state":"RUNNING"' ]
+      stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"PAUSED"','"state":"FAILED"']
+
+- name: Prueba de conexion DB2
+  skip: _db2_
+  entries:
+     - name: Añadimos el nodo remoto al nodo del cliente db2
+       command: /home/db2clnt/v10.5/bin/db2 -t
+       stdin: |
+           catalog tcpip node db2 remote db2-tst server 50000;
+       stdout_has: [ 'The CATALOG TCPIP NODE command completed successfully' ]
+     - name: Añadimos la base de datos al nodo cliente DB2
+       command: /home/db2clnt/v10.5/bin/db2 -t
+       stdin: |
+           catalog database SAMPLE at node db2;
+       stdout_has: [ 'The CATALOG DATABASE command completed successfully' ]
+     - name: Conectamos a la base de datos
+       command: /home/db2clnt/v10.5/bin/db2 -t
+       stdin: |
+           connect to SAMPLE user db2inst1 using khaleesi;
+       stdout_has: [ 'Database Connection Information' ]
+
+- name: Kakfa Connect & DB2 - Replica de datos de db2 via procedure a tabla oracle utilizando sinonimo y encriptación de ambos password (caso ALF - - marca de tiempo columna timestamp)
+  skip: _KafkaConnect_DB2_
+  entries:
+
+  - name: (CLEAN) Borramos el source si existe (src-cai-arqlab-o-numper1)
+    command: |
+      curl -vs -X DELETE http://connect02-discovery:8083/connectors/src-cai-arqlab-o-numper1
+    ignore_exit_code: true
+
+  - name: (CLEAN) Borramos el sink si existe (snk-cai-dtpflx-o-numper1)
+    command: |
+      curl -vs -X DELETE http://connect02-discovery:8083/connectors/snk-cai-arqlab-o-numper1
+    ignore_exit_code: true
+
+  - name: Esperamos 10 segundos para dar tiempo a que los conectores se den de baja
+    command: sleep 10
+
+
+  - name: (CLEAN) Borramos todos los datos previos del consumer group si existe (connect-snk-cai-arqlab-o-numper1) para conseguir que empieze desde 0
+    command: |
+      /confluent-4.1.1/bin/kafka-consumer-groups --bootstrap-server kafka02-discovery:9092 --delete --group connect-snk-cai-arqlab-o-numper1
+    ignore_exit_code: true
+
+  - name: (CLEAN) Borramos el topic de la prueba si existe cai-arqlab-numper1)
+    command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-numper1 --delete
+    ignore_exit_code: true
+
+  - name: Creamos el topic cai-arqlab-numper1
+    command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-numper1 --partitions 3 --replication-factor 3 --create
+    stdout_has: [ 'Created topic "cai-arqlab-numper1".' ]
+
+  - name: (CLEAN) Eliminamos la tabla en caso de existir NUMPER1
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    ignore_exit_code: true
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+      DROP TABLE NUMPER1;
+
+  - name: (CLEAN) Eliminamos store procedure en caso de existir (ALFKTNUMPER1)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    ignore_exit_code: true
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+      DROP PROCEDURE ALFKTNUMPER1;
+  - name: Creamos la tabla origen NUMPER1 en db2 (validacion por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+      CREATE TABLE "NUMPER1" (
+      "PARTICIO" DECIMAL(3 , 0) NOT NULL,
+      "NUMPERSO" DECIMAL(13 , 0) NOT NULL,
+      "EMPRESA" DECIMAL(5 , 0) NOT NULL,
+      "TIPDIR" CHAR(1) FOR MIXED DATA NOT NULL,
+      "PRIORIDA" DECIMAL(3 , 0) NOT NULL,
+      "DIRECCIO" CHAR(60) FOR MIXED DATA NOT NULL,
+      "CPOSTAL" CHAR(5) FOR MIXED DATA NOT NULL,
+      "LOCALIDA" CHAR(45) FOR MIXED DATA NOT NULL,
+      "PROVIN" CHAR(2) FOR MIXED DATA NOT NULL,
+      "PAIS" CHAR(3) FOR MIXED DATA NOT NULL,
+      "LOCINOM" DECIMAL(3 , 0) NOT NULL,
+      "LOCINUM" DECIMAL(3 , 0) NOT NULL,
+      "INNORMAL" CHAR(1) FOR MIXED DATA NOT NULL,
+      "CDRTAPOB" DECIMAL(11 , 0) NOT NULL,
+      "CDRTAVIA" DECIMAL(11 , 0) NOT NULL,
+      "CDRTAZON" DECIMAL(11 , 0) NOT NULL,
+      "FECALTA" DATE NOT NULL WITH DEFAULT,
+      "FEINIAPL" DECIMAL(7 , 0) NOT NULL,
+      "FEFINAPL" DECIMAL(7 , 0) NOT NULL,
+      "FECULTIM" DATE NOT NULL WITH DEFAULT,
+      "HORULTIM" TIME NOT NULL WITH DEFAULT,
+      "USUMODI" CHAR(8) FOR MIXED DATA NOT NULL,
+      "CANMODI" DECIMAL(9 , 0) NOT NULL,
+      "FECNORMA" DECIMAL(7 , 0) NOT NULL WITH DEFAULT,
+      "HOGARID" DECIMAL(11 , 0) NOT NULL WITH DEFAULT,
+      "FEALHOID" DECIMAL(7 , 0) NOT NULL WITH DEFAULT,
+      "FEULMIDH" DECIMAL(7 , 0) NOT NULL WITH DEFAULT,
+      "INDDESGL" CHAR(1) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "TIPOVIA" CHAR(3) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "NOMCARRE" CHAR(60) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "NUMDESDE" DECIMAL(5 , 0) NOT NULL WITH DEFAULT,
+      "NUMHASTA" CHAR(10) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "NUMEDIFI" CHAR(25) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "NUMESCAL" CHAR(5) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "NUMERPIS" CHAR(15) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "NUMEPORT" CHAR(5) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "RESTA" CHAR(40) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "INDBLOC" DECIMAL(1 , 0) NOT NULL WITH DEFAULT,
+      "CPOSTALNR" CHAR(15) FOR MIXED DATA NOT NULL WITH DEFAULT,
+      "ROWNUMID" BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY (
+      NO MINVALUE
+      NO MAXVALUE
+      NO CYCLE
+      CACHE 20
+      NO ORDER ) ,
+      "CHGTMST" TIMESTAMP NOT NULL GENERATED ALWAYS FOR EACH ROW ON UPDATE AS ROW CHANGE TIMESTAMP
+      );
+  - name: Creamos el Store procedure ALFKTNUMPER1 que lee de NUMPER1 en DB2 (validacion por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+
+      CREATE PROCEDURE ALFKTNUMPER1
+      (IN TSTAMPI TIMESTAMP,
+      IN TSTAMPF TIMESTAMP,
+      IN IDCOL BIGINT)
+      RESULT SETS 1
+      LANGUAGE SQL
+      P1: BEGIN
+      -- Declare cursor
+      DECLARE CURSOR_CLIENT_KAFKA CURSOR WITH RETURN FOR
+
+      SELECT NUMPERSO as NUMPERSO
+      , FECALTA as FECALTA
+      , FECULTIM as FECULTIM
+      , HORULTIM as HORULTIM
+      , localida as LOCALIDA
+      , direccio as DIRECCIO
+      , ROWNUMID as ROWNUMID
+      , CHGTMST as CHGTMST
+      FROM NUMPER1
+      WHERE CHGTMST < TSTAMPF
+      AND CHGTMST >= TSTAMPI -- redundant but prevents from index rangescan
+      AND ( ( CHGTMST = TSTAMPI
+      AND ROWNUMID > IDCOL
+      )
+      OR CHGTMST > TSTAMPI
+      )
+      ORDER BY CHGTMST, ROWNUMID ASC;--
+
+      -- Cursor left open for client application
+      OPEN CURSOR_CLIENT_KAFKA;--
+
+      END P1;
+
+
+  - name: Insertamos 50 filas en la tabla origen de DB2 NUMPER1 (validación por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+      INSERT INTO NUMPER1 (PARTICIO,NUMPERSO ,EMPRESA ,TIPDIR ,PRIORIDA ,DIRECCIO ,CPOSTAL ,LOCALIDA,PROVIN ,PAIS ,LOCINOM,LOCINUM ,INNORMAL,CDRTAPOB,CDRTAVIA,CDRTAZON,FECALTA,FEINIAPL,FEFINAPL,FECULTIM,HORULTIM,USUMODI,CANMODI,FECNORMA,HOGARID,FEALHOID,FEULMIDH,INDDESGL,TIPOVIA,NOMCARRE,NUMDESDE,NUMHASTA,NUMEDIFI,NUMESCAL,NUMERPIS,NUMEPORT,RESTA,INDBLOC,CPOSTALNR)
+      with dummy(id) as (select 1 id from SYSIBM.SYSDUMMY1 union all select id + 1 id from dummy where id<50) select 1,id,100,'D',1,'DIRECCION 1','08030','SANT ANDREU','BA','CAT',100,100,'A',100,101,102,SYSDATE,2018151,2018151,SYSDATE,SYSDATE,'ABCDEFGH',1,2018235,9999,2018235,2018235,'A','ABC','CARRER A',12,'15','192A','I','1er','2ona','la resta',1,'08030' from dummy;
+      COMMIT;
+
+  - name: (CLEAN) Dropeamos la tabla destino NUMPER1_DIR de Oracle en caso de existir
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    ignore_exit_code: true
+    stdin: |
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+      DROP TABLE NUMPER1_DIR PURGE;
+
+  - name: Creamos la tabla destino NUMPER1_DIR (validacion por exit code)
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    stdin: |
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+
+      CREATE TABLE NUMPER1_DIR (
+          "ROWNUMID" NUMBER not null,
+          "CHGTMST" timestamp not null,
+          "NUMPERSO" NUMBER not null,
+          "LOCALIDA" VARCHAR2(1000) not null,
+          "DIRECCIO" varchar2(1000) not null,
+          "FECULTIM" DATE NOT NULL ENABLE,
+          "HORULTIM" DATE NOT NULL ENABLE,
+          "FECALTA" DATE NOT NULL ENABLE);
+
+  - name: Creamos el sinonimo SN_NUMPER1_DIR a la tabla destino NUMPER1_DIR (validacion por exit code)
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    stdin: |
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+
+      CREATE OR REPLACE SYNONYM SN_NUMPER1_DIR FOR NUMPER1_DIR;
+
+  - name: Creamos el fichero source (src-cai-arqlab-o-numper1.json) (validacion por exit code)
+    command: tee src-cai-arqlab-o-numper1.json
+    stdin: |
+      {
+        "name": "src-cai-arqlab-o-numper1",
+        "config": {
+          "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+          "connection.url":"jdbc:db2://db2-tst:50000/sample",
+          "connection.user":"db2inst1",
+          "connection.password":"WiXRGbSxtxXkZv7sosxUtw==",
+          "connection.password.encrypted":true,
+          "mode": "timestamp+incrementing",
+          "procedure": "ALFKTNUMPER1",
+          "procedure.ini.mark": "",
+          "procedure.mark.format": "yyyy-MM-dd HH:mm:ss",
+          "procedure.mode": "timestamp",
+          "incrementing.column.name": "ROWNUMID",
+          "timestamp.column.name": "CHGTMST",
+          "topic.prefix": "cai-arqlab-numper1",
+          "poll.interval.ms": "2000",
+          "batch.size": "25000"
+        }
+      }
+
+  - name: Creamos el source (src-cai-arqlab-o-numper1.json)
+    command: |
+      curl -vs --stderr -X POST -H "Content-Type: application/json" --data @src-cai-arqlab-o-numper1.json http://connect02-discovery:8083/connectors
+    stdout_has: [ '"name":"src-cai-arqlab-o-numper1"']
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+  - name: Creamos el fichero sink (snk-cai-arqlab-o-numper1.json) (validacion por exit code)
+    command: tee snk-cai-arqlab-o-numper1.json
+    stdin: |
+      {
+       "name": "snk-cai-arqlab-o-numper1",
+       "config": {
+         "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+         "connection.url":"jdbc:oracle:thin:@oracle-tst:1521/XE",
+         "connection.user":"KAFKALAB",
+         "connection.password":"oOOxZZ2abRM0pGcuj+n8Ew==",
+         "connection.password.encrypted":"true",
+         "topics.regex":"cai-arqlab-numper1",
+         "table.name.format":"SN_NUMPER1_DIR",
+         "insert.mode":"insert",
+         "auto.create":"false",
+         "batch.size": "25000",
+         "task.max":"3"
+        }
+       }
+
+  - name: Creamos el sink (snk-cai-arqlab-o-numper1.json)
+    command: |
+      curl -vs --stderr -X POST -H "Content-Type: application/json" --data @snk-cai-arqlab-o-numper1.json http://connect02-discovery:8083/connectors
+    stdout_has: [ '"name":"snk-cai-arqlab-o-numper1"']
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+  - name: Esperamos 30 segundos para dar tiempo a que el sink se dé de alta
+    command: sleep 30
+
+  - name: Create shell de test3.sh para poder capturar la info de offset por particion
+    command: tee /test3.sh
+    stdin: |
+      #!/bin/bash
+      kafkacat -C -t cai-arqlab-numper1 -b kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092 -e 2>&1 1>/dev/null | sed -e 's/: exiting//g' | awk '{split($0,a," "); sum += a[10]} END {print sum,"files"}'
+  - name: Damos permisos de ejecucion al script
+    command: chmod 777 /test3.sh
+
+  - name: Validamos que el source funciona revisando que el topic cai-arqlab-numper1 contiene 50 registros
+    command: bash -c /test3.sh
+    stdout_has: [ '50 files' ]
+    timeout: 8s
+
+  - name: Validamos que el sink funciona revisando que la sinonima-tabla SN_NUMPER1_DIR contiene 50 registros (validacion por exit code)
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    stdin: |
+      set serveroutput ON;
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+      DECLARE
+        regs NUMBER;
+      BEGIN
+        SELECT count(*) INTO regs FROM SN_NUMPER1_DIR;
+        IF regs IS NULL or regs<>50 THEN
+            raise_application_error(-20101, 'El numero de registros en SN_NUMPER1_DIR es ' || nvl(regs,0) || ' en lugar de 50');
+        ELSE
+            dbms_output.put_line('El numero de registros leidos es ' || nvl(regs,0));
+        END IF;
+      END;
+      /
+  - name: Esperamos 5s para dar tiempo a KC a actualizar el estado de los conectores.
+    command: sleep 5
+  - name: Validamos que el servicio REST de status de src-cai-arqlab-o-numper1 nos indica que el conector está corriendo sin problemas
+    command: |
+      curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/src-cai-arqlab-o-numper1/status
+    stdout_has: [ '"state":"RUNNING"' ]
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"PAUSED"','"state":"FAILED"']
+  - name: Validamos que el servicio REST de status de snk-cai-arqlab-o-numper1 nos indica que el conector está corriendo sin problemas
+    command: |
+      curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/snk-cai-arqlab-o-numper1/status
+    stdout_has: [ '"state":"RUNNING"' ]
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"PAUSED"','"state":"FAILED"']
+
+- name: Kakfa Connect & DB2 - Captura de datos de db2 via procedure con fecha de arranque prefijada. Se valida que solo se recogen registros a partir de esa fecha (caso ALF - marca de tiempo columna timestamp)
+  skip: _KafkaConnect_DB2_
+  entries:
+  - name: (CLEAN) Borramos el source si existe (src-cai-arqlab-o-numper1MI)
+    command: |
+      curl -vs -X DELETE http://connect02-discovery:8083/connectors/src-cai-arqlab-o-numper1MI
+    ignore_exit_code: true
+
+  - name: (CLEAN) Borramos el topic de la prueba si existe cai-arqlab-numper1MI
+    command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-numper1MI --delete
+    ignore_exit_code: true
+
+  - name: Creamos el topic cai-arqlab-numper1MI
+    command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-numper1MI --partitions 3 --replication-factor 3 --create
+    stdout_has: [ 'Created topic "cai-arqlab-numper1MI".' ]
+
+  - name: Creamos la primera parte del fichero source (src-cai-arqlab-o-numper1MI.json) (validacion por exit code)
+    command: tee src-cai-arqlab-o-numper1MI.json
+    stdin: |
+      {
+      "name": "src-cai-arqlab-o-numper1MI",
+      "config": {
+        "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+        "connection.url":"jdbc:db2://db2-tst:50000/sample",
+        "connection.user":"db2inst1",
+        "connection.password":"WiXRGbSxtxXkZv7sosxUtw==",
+        "connection.password.encrypted":true,
+        "mode": "timestamp+incrementing",
+        "procedure": "ALFKTNUMPER1",
+
+  - name: Añadirmos el resto de configuración al fichero del source que no depende del timestamp (src-cai-arqlab-o-numper1MI.json) (validacion por exit code)
+    command: tee src-cai-arqlab-o-numper1MI.json2
+    stdin: |
+      "procedure.mark.format": "yyyy-MM-dd HH:mm:ss",
+      "procedure.mode": "timestamp",
+      "incrementing.column.name": "ROWNUMID",
+      "timestamp.column.name": "CHGTMST",
+      "topic.prefix": "cai-arqlab-numper1MI",
+      "poll.interval.ms": "2000",
+      "batch.size": "25000"
+        }
+      }
+
+  - name: Creamos la shell que formara el fichero json final del source (src-cai-arqlab-o-numper1MI.json) y que añade el parametro procedure.ini.mark con la fecha/hora actual y asi no recoger datos anteriores (validacion por exit code)
+    command: tee concat4.sh
+    stdin: |
+      #!/bin/bash
+      echo '"procedure.ini.mark": "' `date +"%Y-%m-%d %H:%M:%S"`'",' >> src-cai-arqlab-o-numper1MI.json
+      cat src-cai-arqlab-o-numper1MI.json2 >> src-cai-arqlab-o-numper1MI.json
+
+  - name: Damos permisos de ejecucion al script concat4.sh (validacion por exit code)
+    command: chmod 777 /concat4.sh
+
+  - name: Ejecutamos la shell para formar src-cai-arqlab-o-numper1MI.json definitivo (validacion por exit code)
+    command: /concat4.sh
+
+  - name: Creamos el source (src-cai-arqlab-o-numper1MI.json)
+    command: |
+      curl -vs --stderr -X POST -H "Content-Type: application/json" --data @src-cai-arqlab-o-numper1MI.json http://connect02-discovery:8083/connectors
+    stdout_has: [ '"name":"src-cai-arqlab-o-numper1MI"']
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+  - name: Insertamos 15 filas en la tabla origen de DB2 NUMPER1 (validación por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+      INSERT INTO NUMPER1 (PARTICIO,NUMPERSO ,EMPRESA ,TIPDIR ,PRIORIDA ,DIRECCIO ,CPOSTAL ,LOCALIDA,PROVIN ,PAIS ,LOCINOM,LOCINUM ,INNORMAL,CDRTAPOB,CDRTAVIA,CDRTAZON,FECALTA,FEINIAPL,FEFINAPL,FECULTIM,HORULTIM,USUMODI,CANMODI,FECNORMA,HOGARID,FEALHOID,FEULMIDH,INDDESGL,TIPOVIA,NOMCARRE,NUMDESDE,NUMHASTA,NUMEDIFI,NUMESCAL,NUMERPIS,NUMEPORT,RESTA,INDBLOC,CPOSTALNR)
+      with dummy(id) as (select 1 id from SYSIBM.SYSDUMMY1 union all select id + 1 id from dummy where id<15) select 1,50+id,100,'D',1,'DIRECCION 1','08030','SANT ANDREU','BA','CAT',100,100,'A',100,101,102,SYSDATE,2018151,2018151,SYSDATE,SYSDATE,'ABCDEFGH',1,2018235,9999,2018235,2018235,'A','ABC','CARRER A',12,'15','192A','I','1er','2ona','la resta',1,'08030' from dummy;
+      COMMIT;
+
+  - name: Esperamos 15 segundos para dar tiempo al source que se de alta
+    command: sleep 15
+
+  - name: Create shell de test4.sh para poder capturar la info de offset por particion del topic cai-arqlab-numper1MI
+    command: tee /test4.sh
+    stdin: |
+      #!/bin/bash
+      kafkacat -C -t cai-arqlab-numper1MI -b kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092 -e 2>&1 1>/dev/null | sed -e 's/: exiting//g' | awk '{split($0,a," "); sum += a[10]} END {print sum,"files"}'
+
+  - name: Damos permisos de ejecucion al script test4.sh
+    command: chmod 777 /test4.sh
+
+  - name: Validamos que el source funciona revisando que el topic cai-arqlab-numper1 contiene exactamente 15 registros.
+    command: bash -c /test4.sh
+    stdout_has: [ '15 files' ]
+    timeout: 8s
+
+- name: Kakfa Connect & DB2 - Replica de datos de db2 via procedure a tabla oracle utilizando sinonimo y encriptación de ambos password (caso ALFT34 - marca de tiempo columna decimales). Validacion que pause/resume no genera registros extra.
+  skip: _KafkaConnect_DB2_
+  entries:
+
+  - name: (CLEAN) Borramos el source si existe (src-cai-arqlab-o-alfkv3400)
+    command: |
+      curl -vs -X DELETE http://connect02-discovery:8083/connectors/src-cai-arqlab-o-alfkv3400
+    ignore_exit_code: true
+
+  - name: (CLEAN) Borramos el sink si existe (snk-cai-arqlab-o-alfkv3400)
+    command: |
+      curl -vs -X DELETE http://connect02-discovery:8083/connectors/snk-cai-arqlab-o-alfkv3400
+    ignore_exit_code: true
+
+  - name: Esperamos 20 segundos para dar tiempo a que los conectores se den de baja
+    command: sleep 20
+
+
+  - name: (CLEAN) Borramos todos los datos previos del consumer group si existe (connect-snk-cai-arqlab-o-alfkv3400) para conseguir que empieze desde 0
+    command: |
+      /confluent-4.1.1/bin/kafka-consumer-groups --bootstrap-server kafka02-discovery:9092 --delete --group connect-snk-cai-arqlab-o-alfkv3400
+    ignore_exit_code: true
+
+  - name: (CLEAN) Borramos el topic de la prueba si existe cai-arqlab-alfkv3400
+    command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-alfkv3400 --delete
+    ignore_exit_code: true
+
+  - name: Creamos el topic cai-arqlab-alfkv340
+    command: ./confluent-4.1.1/bin/kafka-topics --zookeeper zk02-discovery:2181  --topic cai-arqlab-alfkv3400 --partitions 3 --replication-factor 3 --create
+    stdout_has: [ 'Created topic "cai-arqlab-alfkv3400".' ]
+
+  - name: (CLEAN) Eliminamos la tabla ALFT34, la vista ALFV340 y el procedure en caso de existir ALFKV340
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    ignore_exit_code: true
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+      DROP TABLE ALFT34;
+      DROP VIEW ALFV340;
+      DROP PROCEDURE ALFKV3400;
+
+  - name: Creamos la tabla origen ALFT34 en db2 (validacion por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+      CREATE TABLE ALFT34 (
+            "EMPRESA" DECIMAL(3 , 0) NOT NULL,
+            "COGNOM1" CHAR(50) NOT NULL,
+            "COGNOM2" CHAR(50) NOT NULL,
+            "NOMPERSO" CHAR(50) NOT NULL,
+            "NUMPERSO" DECIMAL(13 , 0) NOT NULL,
+            "INICNOM" CHAR(1) NOT NULL,
+            "INICSEG" CHAR(1) NOT NULL,
+            "NIFPERSO" CHAR(18) NOT NULL,
+            "NIFEURO" CHAR(2) NOT NULL,
+            "PAIS" CHAR(3) NOT NULL,
+            "PROVIN" CHAR(2) NOT NULL,
+            "CPOSTA" CHAR(5) NOT NULL,
+            "TIPPER" CHAR(1) NOT NULL,
+            "INDFUSIO" CHAR(1) NOT NULL,
+            "ESTAT" CHAR(1) NOT NULL,
+            "PARTI1" CHAR(10) NOT NULL,
+            "PARTI2" CHAR(10) NOT NULL,
+            "FNACIM" DECIMAL(7 , 0) NOT NULL,
+            "TIPDOC" CHAR(1) NOT NULL WITH DEFAULT,
+            "TIPCLI" DECIMAL(3 , 0) NOT NULL WITH DEFAULT,
+            "FECANC" DECIMAL(7 , 0) NOT NULL WITH DEFAULT,
+            "FECULTIM" DECIMAL(7 , 0) NOT NULL WITH DEFAULT,
+            "HORULTIM" DECIMAL(7 , 0) NOT NULL WITH DEFAULT,
+            "USUMODI" CHAR(8) NOT NULL WITH DEFAULT,
+            "CANMODI" DECIMAL(9 , 0) NOT NULL WITH DEFAULT,
+            "EMPGES" DECIMAL(5 , 0) NOT NULL WITH DEFAULT
+            );
+
+  - name: Creamos la vista ALFV340 que apunta a ALFT34 en db2 (validacion por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CREATE VIEW "ALFV340" ("EMPRESA", "NUMPERSO", "NOMPERSO", "COGNOM1", "COGNOM2", "NIFPERSO", "PAIS", "PROVIN", "CPOSTA", "TIPPER", "EMPGES", "FNACIM", "FECULTIM", "HORULTIM", "CHGMARKER") AS
+      SELECT EMPRESA AS EMPRESA , NUMPERSO AS NUMPERSO , NOMPERSO AS NOMPERSO , COGNOM1 AS COGNOM1 , COGNOM2 AS COGNOM2 , NIFPERSO AS NIFPERSO , PAIS AS PAIS , PROVIN AS PROVIN , CPOSTA AS CPOSTA , TIPPER AS TIPPER , EMPGES AS EMPGES , FNACIM AS FNACIM, FECULTIM AS FECULTIM, HORULTIM AS HORULTIM, DIGITS(FECULTIM)||DIGITS(HORULTIM) AS CHGMARKER FROM ALFT34;
+
+  - name: Creamos el Store procedure ALFKV340 que lee de ALFV3400 en DB2 (validacion por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+
+      CREATE PROCEDURE ALFKV3400 (IN TFROM CHAR(14), IN TUNTIL CHAR(14), IN INCREMENTAL BIGINT)
+      RESULT SETS 1
+      LANGUAGE SQL
+      BEGIN
+      DECLARE C_ALFV340 CURSOR WITH RETURN FOR
+      SELECT EMPRESA AS EMPRESA , NUMPERSO AS NUMPERSO , NOMPERSO AS NOMPERSO , COGNOM1 AS COGNOM1 , COGNOM2 AS COGNOM2 , NIFPERSO AS NIFPERSO , PAIS AS PAIS ,
+      PROVIN AS PROVIN , CPOSTA AS CPOSTA , TIPPER AS TIPPER , EMPGES AS EMPGES , FNACIM AS FNACIM , FECULTIM AS FECULTIM , HORULTIM AS HORULTIM ,
+      NUMPERSO AS CHGINC , CHGMARKER AS CHGMARKER FROM ALFV340
+      WHERE (EMPRESA=1) AND (CHGMARKER < TUNTIL ) AND (CHGMARKER >= TFROM ) AND ((CHGMARKER = TFROM AND NUMPERSO>INCREMENTAL)
+      OR  CHGMARKER > TFROM) ORDER BY CHGMARKER ASC, NUMPERSO ASC;--
+
+      OPEN C_ALFV340;--
+      END;
+
+  - name: Insertamos 20 filas en la tabla origen de DB2 ALFT34 (validación por exit code)
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+
+      INSERT INTO ALFT34 (EMPRESA, COGNOM1, COGNOM2, NOMPERSO, NUMPERSO, INICNOM, INICSEG, NIFPERSO, NIFEURO, PAIS, PROVIN, CPOSTA, TIPPER, INDFUSIO, ESTAT, PARTI1, PARTI2, FNACIM, TIPDOC, TIPCLI, FECANC, FECULTIM, HORULTIM, USUMODI, CANMODI, EMPGES)
+      with dummy(id) as (select 1 id from SYSIBM.SYSDUMMY1 union all select id + 1 id from dummy where id < 20) SELECT 1, 'AAA', 'BBB', 'CCC', id, '3', '3', '33333333A', '33', '333', '33', '33333', '3', '3', '3', '3333333333', '3333333333', 3,'3', 333, 3, VARCHAR_FORMAT(CURRENT_DATE,'YYYYDDD'), VARCHAR_FORMAT(CURRENT TIMESTAMP,'HH24MISS')||'0', 'CCCCCCCC', 3, 3 FROM dummy;
+
+      COMMIT;
+
+
+  - name: (CLEAN) Dropeamos la tabla destino TDE_PERSONAS_KAFKA_A de Oracle en caso de existir
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    ignore_exit_code: true
+    stdin: |
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+      DROP TABLE TDE_PERSONAS_KAFKA_A PURGE;
+
+  - name: Creamos la tabla destino TDE_PERSONAS_KAFKA_A (validacion por exit code)
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    stdin: |
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+
+      CREATE TABLE TDE_PERSONAS_KAFKA_A
+      (
+        CHGINC NUMBER
+      , CHGMARKER NUMBER
+      , EMPRESA NUMBER NOT NULL
+      , NUMPERSO NUMBER NOT NULL
+      , FECULTIM NUMBER NOT NULL
+      , HORULTIM NUMBER NOT NULL
+      , NOMPERSO VARCHAR2(50 CHAR)
+      , COGNOM1 VARCHAR2(50 CHAR)
+      , NIFPERSO VARCHAR2(18 CHAR)
+      , PAIS VARCHAR2(3 CHAR)
+      , PROVIN VARCHAR2(2 CHAR)
+      , CPOSTA VARCHAR2(5 CHAR)
+      , COGNOM2 VARCHAR2(50 CHAR)
+      , TIPPER VARCHAR2(1 CHAR)
+      , EMPGES NUMBER
+      , FNACIM NUMBER
+      , TIME_STAMP TIMESTAMP(6) DEFAULT SYSTIMESTAMP
+      );
+
+  - name: Creamos el sinonimo SN_TDE_PERSONAS_KAFKA_A a la tabla destino TDE_PERSONAS_KAFKA_A (validacion por exit code)
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    stdin: |
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+
+      CREATE OR REPLACE SYNONYM SN_TDE_PERSONAS_KAFKA FOR TDE_PERSONAS_KAFKA_A;
+
+  - name: Creamos el fichero source (src-cai-arqlab-o-alfkv3400.json) (validacion por exit code)
+    command: tee src-cai-arqlab-o-alfkv3400.json
+    stdin: |
+      {
+          "name": "src-cai-arqlab-o-alfkv3400",
+          "config": {
+              "connector.class":"io.confluent.connect.jdbc.JdbcSourceConnector",
+              "connection.url":"jdbc:db2://db2-tst:50000/sample",
+              "connection.user":"db2inst1",
+              "connection.password":"WiXRGbSxtxXkZv7sosxUtw",
+              "connection.password.encrypted":"true",
+              "mode":"timestamp+incrementing",
+              "procedure":"ALFKV3400",
+              "procedure.mode":"CHAR",
+              "procedure.mark.format":"yyyyDDDHHmmssS",
+              "procedure.ini.mark":"",
+              "incrementing.column.name":"CHGINC",
+              "timestamp.column.name":"CHGMARKER",
+              "topic.prefix":"cai-arqlab-alfkv3400",
+              "poll.interval.ms":"1000"
+          }
+      }
+
+  - name: Creamos el source (src-cai-arqlab-o-alfkv3400.json)
+    command: |
+      curl -vs --stderr -X POST -H "Content-Type: application/json" --data @src-cai-arqlab-o-alfkv3400.json http://connect02-discovery:8083/connectors
+    stdout_has: [ '"name":"src-cai-arqlab-o-alfkv3400"']
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+  - name: Creamos el fichero sink (snk-cai-arqlab-o-alfkv3400.json) (validacion por exit code)
+    command: tee snk-cai-arqlab-o-alfkv3400.json
+    stdin: |
+      {
+       "name": "snk-cai-arqlab-o-alfkv3400",
+       "config": {
+         "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+         "connection.url":"jdbc:oracle:thin:@oracle-tst:1521/XE",
+         "connection.user":"KAFKALAB",
+         "connection.password":"oOOxZZ2abRM0pGcuj+n8Ew==",
+         "connection.password.encrypted":"true",
+         "topics.regex":"cai-arqlab-alfkv3400",
+         "table.name.format":"SN_TDE_PERSONAS_KAFKA",
+         "insert.mode":"insert",
+         "auto.create":"false",
+          "auto.evolve":"false",
+         "batch.size": "25000",
+         "task.max":"3"
+        }
+       }
+
+  - name: Creamos el sink (snk-cai-arqlab-o-alfkv3400)
+    command: |
+      curl -vs --stderr -X POST -H "Content-Type: application/json" --data @snk-cai-arqlab-o-alfkv3400.json http://connect02-discovery:8083/connectors
+    stdout_has: [ '"name":"snk-cai-arqlab-o-alfkv3400"']
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+  - name: Esperamos 30 segundos para dar tiempo a que el sink se dé de alta
+    command: sleep 30
+
+  - name: Create shell de test5.sh para poder capturar la info de offset por particion
+    command: tee /test5.sh
+    stdin: |
+      #!/bin/bash
+      kafkacat -C -t cai-arqlab-alfkv3400 -b kafka02-tst-0.kafka02-discovery:9092,kafka02-tst-1.kafka02-discovery:9092,kafka02-tst-2.kafka02-discovery:9092 -e 2>&1 1>/dev/null | sed -e 's/: exiting//g' | awk '{split($0,a," "); sum += a[10]} END {print sum,"files"}'
+  - name: Damos permisos de ejecucion al script
+    command: chmod 777 /test5.sh
+
+  - name: Validamos que el source funciona revisando que el topic cai-arqlab-alfkv3400 contiene 20 registros
+    command: bash -c /test5.sh
+    stdout_has: [ '20 files' ]
+    timeout: 8s
+
+  - name: Validamos que el sink funciona revisando que la sinonima-tabla SN_TDE_PERSONAS_KAFKA contiene 20 registros (validacion por exit code)
+    command: /opt/oracle/instantclient/sqlplus KAFKALAB/KAFKALAB@oracle-tst:1521
+    stdin: |
+      set serveroutput ON;
+      WHENEVER SQLERROR EXIT SQL.SQLCODE;
+      DECLARE
+        regs NUMBER;
+      BEGIN
+        SELECT count(*) INTO regs FROM SN_TDE_PERSONAS_KAFKA;
+        IF regs IS NULL or regs<>20 THEN
+            raise_application_error(-20101, 'El numero de registros en SN_TDE_PERSONAS_KAFKA es ' || nvl(regs,0) || ' en lugar de 20');
+        ELSE
+            dbms_output.put_line('El numero de registros leidos es ' || nvl(regs,0));
+        END IF;
+      END;
+      /
+  - name: Esperamos 5s para dar tiempo a KC a actualizar el estado de los conectores.
+    command: sleep 5
+  - name: Validamos que el servicio REST de status de src-cai-arqlab-o-alfkv3400 nos indica que el conector está corriendo sin problemas
+    command: |
+      curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/src-cai-arqlab-o-alfkv3400/status
+    stdout_has: [ '"state":"RUNNING"' ]
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"PAUSED"','"state":"FAILED"']
+  - name: Validamos que el servicio REST de status de snk-cai-arqlab-o-alfkv3400 nos indica que el conector está corriendo sin problemas
+    command: |
+      curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/snk-cai-arqlab-o-alfkv3400/status
+    stdout_has: [ '"state":"RUNNING"' ]
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"PAUSED"','"state":"FAILED"']
+
+  - name: Realimos un pause src-cai-arqlab-o-alfkv3400 con el objetivo de validar despues que al hacer el resume no se generan nuevos registros en el topic cai-arqlab-alfkv3400
+    command: |
+      curl -vs -X PUT http://connect02-discovery:8083/connectors/src-cai-arqlab-o-alfkv3400/pause
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+  - name: Debido a un bug del KafkaConnect el pause a nivel de task solo es efectivo despues de haber capturado un registro desde la pausa con lo que añadimos 10 registros más
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+
+      INSERT INTO ALFT34 (EMPRESA, COGNOM1, COGNOM2, NOMPERSO, NUMPERSO, INICNOM, INICSEG, NIFPERSO, NIFEURO, PAIS, PROVIN, CPOSTA, TIPPER, INDFUSIO, ESTAT, PARTI1, PARTI2, FNACIM, TIPDOC, TIPCLI, FECANC, FECULTIM, HORULTIM, USUMODI, CANMODI, EMPGES)
+      with dummy(id) as (select 1 id from SYSIBM.SYSDUMMY1 union all select id + 1 id from dummy where id < 10) SELECT 1, 'AAA', 'BBB', 'CCC', id, '3', '3', '33333333A', '33', '333', '33', '33333', '3', '3', '3', '3333333333', '3333333333', 3,'3', 333, 3, VARCHAR_FORMAT(CURRENT_DATE,'YYYYDDD'), VARCHAR_FORMAT(CURRENT TIMESTAMP,'HH24MISS')||'0', 'CCCCCCCC', 3, 3 FROM dummy;
+
+      COMMIT;
+
+  - name: Esperamos 5s para dar tiempo a KC a actualizar el estado de los conectores y a realizar el ultimo pull de 10 (total 20+10 = 30)
+    command: sleep 5
+
+  - name: Validamos que el servicio REST de status de src-cai-arqlab-o-alfkv3400 nos indica que el conector esta pausado.
+    command: |
+      curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/src-cai-arqlab-o-alfkv3400/status
+    stdout_has: [ '"state":"PAUSED"' ]
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"RUNNING"','"state":"FAILED"']
+
+
+  - name: Validamos que el source ha traspasado al topic cai-arqlab-alfkv3400 los 30 registros.
+    command: bash -c /test5.sh
+    stdout_has: [ '30 files' ]
+    timeout: 8s
+
+  - name: Volvemos a insertar 20 registros.
+    command: ./home/db2clnt/v10.5/bin/db2 -t
+    stdin: |
+      CONNECT TO sample user DB2INST1 using khaleesi;
+
+      INSERT INTO ALFT34 (EMPRESA, COGNOM1, COGNOM2, NOMPERSO, NUMPERSO, INICNOM, INICSEG, NIFPERSO, NIFEURO, PAIS, PROVIN, CPOSTA, TIPPER, INDFUSIO, ESTAT, PARTI1, PARTI2, FNACIM, TIPDOC, TIPCLI, FECANC, FECULTIM, HORULTIM, USUMODI, CANMODI, EMPGES)
+      with dummy(id) as (select 1 id from SYSIBM.SYSDUMMY1 union all select id + 1 id from dummy where id < 20) SELECT 1, 'AAA', 'BBB', 'CCC', id, '3', '3', '33333333A', '33', '333', '33', '33333', '3', '3', '3', '3333333333', '3333333333', 3,'3', 333, 3, VARCHAR_FORMAT(CURRENT_DATE,'YYYYDDD'), VARCHAR_FORMAT(CURRENT TIMESTAMP,'HH24MISS')||'0', 'CCCCCCCC', 3, 3 FROM dummy;
+
+      COMMIT;
+
+  - name: Esperamos 5s para realmente dar tiempo a una supuesto malfuncionamiento del source.
+    command: sleep 5
+
+
+  - name: Validamos que el source no ha traspasado al topic cai-arqlab-alfkv3400 los 20 registros anteriores (debe seguir en 30 y no en 50).
+    command: bash -c /test5.sh
+    stdout_has: [ '30 files' ]
+    timeout: 8s
+
+  - name: Hacemos un resume de src-cai-arqlab-o-alfkv3400 para que pase los 20 registros restantes.
+    command: |
+      curl -vs -X PUT http://connect02-discovery:8083/connectors/src-cai-arqlab-o-alfkv3400/resume
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ']
+
+  - name: Esperamos 5s para dar tiempo al source reinicar el proceso y traspasar los datos.
+    command: sleep 5
+
+  - name: Validamos que el servicio REST de status de src-cai-arqlab-o-alfkv3400 nos indica que el conector está corriendo sin problemas
+    command: |
+      curl -vs --stderr -X GET http://connect02-discovery:8083/connectors/src-cai-arqlab-o-alfkv3400/status
+    stdout_has: [ '"state":"RUNNING"' ]
+    stdout_not_has: [ 'HTTP/1.1 [345][0-9][0-9] ','"state":"UNASSIGNED"','"state":"PAUSED"','"state":"FAILED"']
+
+  - name: Validamos que el source ha traspasado al topic cai-arqlab-alfkv3400 los 20 registros restantes dando un total de 50.
+    command: bash -c /test5.sh
+    stdout_has: [ '50 files' ]
+    timeout: 8s
