@@ -90,7 +90,7 @@ COPY  include/db2/db2rtcl_nr.rsp /install/
 # Run  DB2 silent installer
 RUN ls /install/
 
-RUN gunzip /install/v10.5fp10_linuxx64_rtcl.tar.gz
+RUN zcat /install/v10.5fp10_linuxx64_rtcl.tar.gz > /install/v10.5fp10_linuxx64_rtcl.tar
 RUN tar -xvzf /install/v10.5fp10_linuxx64_rtcl.tar
 
 RUN /install/rtcl/db2setup -u /install/db2rtcl_nr.rsp && rm -fr /install/rtcl
