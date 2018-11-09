@@ -83,7 +83,7 @@ RUN  \
 RUN mkdir /install
 
 # Copy DB2 tarball - ADD command will expand it automatically
-RUN curl -O https://drive.google.com/uc?export=download&confirm=bVsL&id=1E66Qv-rHqmdIWHVw0kW9SCh49pGzyUDa
+RUN curl -O https://drive.google.com/uc?export=download&confirm=a1VG&id=1E66Qv-rHqmdIWHVw0kW9SCh49pGzyUDa
 ADD v10.5fp10_linuxx64_rtcl.tar.gz /install/
 
 # Copy response file
