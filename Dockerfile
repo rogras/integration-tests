@@ -83,7 +83,7 @@ RUN  \
 RUN mkdir /install
 
 # Copy DB2 tarball - ADD command will expand it automatically
-RUN curl -O https://www.dropbox.com/s/lrrvjhomv63276b/v10.5fp10_linuxx64_rtcl.tar.gz?dl=1 && mv v10.5fp10_linuxx64_rtcl.tar.gz /install/
+RUN curl -o v10.5fp10_linuxx64_rtcl.tar.gz https://www.dropbox.com/s/lrrvjhomv63276b/v10.5fp10_linuxx64_rtcl.tar.gz?dl=1 && mv v10.5fp10_linuxx64_rtcl.tar.gz /install/
 
 # Copy response file
 COPY  include/db2/db2rtcl_nr.rsp /install/
