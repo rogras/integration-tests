@@ -88,6 +88,8 @@ RUN curl -o v10.5fp10_linuxx64_rtcl.tar.gz https://www.dropbox.com/s/lrrvjhomv63
 # Copy response file
 COPY  include/db2/db2rtcl_nr.rsp /install/
 # Run  DB2 silent installer
+RUN unzip /install/v10.5fp10_linuxx64_rtcl.tar.gz
+
 RUN /install/rtcl/db2setup -u /install/db2rtcl_nr.rsp && rm -fr /install/rtcl
 
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/oracle/instantclient
